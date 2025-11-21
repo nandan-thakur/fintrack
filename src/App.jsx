@@ -53,14 +53,6 @@ import {
   query
 } from "firebase/firestore";
 
-// --- Firebase Configuration & Init ---
-
-/* NOTE FOR LOCAL DEPLOYMENT (Vite):
-  When running locally with an .env file, uncomment the block below 
-  and comment out the "Preview Environment" block.
-*/
-
-
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -69,9 +61,6 @@ const firebaseConfig = {
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
-
-// --- Preview Environment Config (Active) ---
-//const firebaseConfig = JSON.parse(__firebase_config);
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -89,7 +78,7 @@ const COLORS = ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2'
 const initialCategoryState = (categories) => {
   const state = {};
   categories.forEach(cat => {
-    state[cat] = [{ id: Date.now() + Math.random(), value: '' }];
+    state[cat] = [{ id: Date.now() + Math.random(), value: '', label: '' }];
   });
   return state;
 };
@@ -102,10 +91,14 @@ const getMonthBounds = () => {
   return { start, end };
 };
 
+// --- Helper Functions for Data Compatibility ---
+// Handles both old format (number) and new format (object {amount, label})
+const getAmount = (item) => (typeof item === 'object' && item !== null ? item.amount : Number(item));
+const getLabel = (item, defaultLabel) => (typeof item === 'object' && item?.label ? item.label : defaultLabel);
+
 // --- Components ---
 
 const SummaryCard = ({ title, amount, type, icon: Icon }) => {
-  // Simple, flat styling with subtle borders
   const iconColor = type === 'income' ? 'text-emerald-600' : type === 'expense' ? 'text-red-600' : 'text-blue-600';
   const bgIcon = type === 'income' ? 'bg-emerald-50' : type === 'expense' ? 'bg-red-50' : 'bg-blue-50';
   const amountColor = type === 'income' ? 'text-emerald-700' : type === 'expense' ? 'text-red-700' : 'text-gray-900';
@@ -136,12 +129,18 @@ const TransactionRow = ({ t, onDelete, onEdit }) => {
       <div className="mt-2 text-xs">
         {Object.entries(data).map(([cat, values]) => {
           const items = Array.isArray(values) ? values : [values];
-          return items.map((val, idx) => (
-            <div key={`${cat}-${idx}`} className="flex justify-between py-1 border-b border-gray-100 last:border-0 text-gray-600">
-              <span>{cat} {items.length > 1 && `(${idx + 1})`}</span>
-              <span className="font-mono font-medium">₹{val.toLocaleString('en-IN')}</span>
-            </div>
-          ));
+          return items.map((val, idx) => {
+            const amount = getAmount(val);
+            const label = getLabel(val, cat);
+            const displayLabel = cat === 'Others' ? label : cat;
+            
+            return (
+              <div key={`${cat}-${idx}`} className="flex justify-between py-1 border-b border-gray-100 last:border-0 text-gray-600">
+                <span>{displayLabel} {items.length > 1 && cat !== 'Others' && `(${idx + 1})`}</span>
+                <span className="font-mono font-medium">₹{amount.toLocaleString('en-IN')}</span>
+              </div>
+            );
+          });
         })}
       </div>
     );
@@ -209,7 +208,7 @@ const TransactionRow = ({ t, onDelete, onEdit }) => {
   );
 };
 
-// --- Helper Component: Input Section (Moved outside App to prevent re-renders) ---
+// --- Helper Component: Input Section ---
 const InputSection = ({ title, cats, state, type, onAdd, onRemove, onChange }) => (
   <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 mb-6">
     <h3 className={`text-base font-semibold mb-4 flex items-center gap-2 ${type === 'income' ? 'text-emerald-700' : 'text-red-700'}`}>
@@ -222,6 +221,20 @@ const InputSection = ({ title, cats, state, type, onAdd, onRemove, onChange }) =
           <div className="sm:col-span-3 space-y-2">
             {state[cat].map((item, idx) => (
               <div key={item.id} className="flex gap-2">
+                
+                {/* Custom Label Input for "Others" */}
+                {cat === 'Others' && (
+                  <div className="flex-1">
+                     <input
+                      type="text"
+                      placeholder="Description"
+                      className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-gray-900 text-sm"
+                      value={item.label || ''}
+                      onChange={(e) => onChange(cat, item.id, 'label', e.target.value, type)}
+                    />
+                  </div>
+                )}
+
                 <div className="relative flex-1">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
                   <input
@@ -229,7 +242,7 @@ const InputSection = ({ title, cats, state, type, onAdd, onRemove, onChange }) =
                     placeholder="0.00"
                     className="w-full pl-8 pr-3 py-2 bg-white border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-gray-900 text-sm"
                     value={item.value}
-                    onChange={(e) => onChange(cat, item.id, e.target.value, type)}
+                    onChange={(e) => onChange(cat, item.id, 'value', e.target.value, type)}
                   />
                 </div>
                 {idx === state[cat].length - 1 && (
@@ -381,7 +394,7 @@ export default function App() {
 
   // --- Logic Helpers ---
   const handleAddField = (category, type) => {
-    const newItem = { id: Date.now() + Math.random(), value: '' };
+    const newItem = { id: Date.now() + Math.random(), value: '', label: '' };
     (type === 'income' ? setIncomeInputs : setExpenseInputs)(prev => ({
       ...prev, [category]: [...prev[category], newItem]
     }));
@@ -393,25 +406,35 @@ export default function App() {
     }));
   };
 
-  const handleInputChange = (category, id, value, type) => {
+  const handleFieldChange = (category, id, field, value, type) => {
     (type === 'income' ? setIncomeInputs : setExpenseInputs)(prev => ({
-      ...prev, [category]: prev[category].map(i => i.id === id ? { ...i, value } : i)
+      ...prev, [category]: prev[category].map(i => i.id === id ? { ...i, [field]: value } : i)
     }));
   };
 
   const handleEdit = (transaction) => {
     setEditingId(transaction.id);
     setDate(transaction.date);
+    
+    // Reconstruct state from stored Objects (new format) or Numbers (old format)
     const reconstruct = (cats, data) => {
       const state = {};
       cats.forEach(cat => {
         const vals = data[cat];
-        state[cat] = Array.isArray(vals) && vals.length 
-          ? vals.map(v => ({ id: Math.random(), value: v })) 
-          : [{ id: Math.random(), value: '' }];
+        
+        if (Array.isArray(vals) && vals.length) {
+          state[cat] = vals.map(v => ({
+            id: Math.random(),
+            value: getAmount(v),
+            label: getLabel(v, '')
+          }));
+        } else {
+          state[cat] = [{ id: Math.random(), value: '', label: '' }];
+        }
       });
       return state;
     };
+
     setIncomeInputs(reconstruct(INCOME_CATEGORIES, transaction.incomes || {}));
     setExpenseInputs(reconstruct(EXPENSE_CATEGORIES, transaction.expenses || {}));
     setView('add');
@@ -430,8 +453,19 @@ export default function App() {
     const process = (inputs, target) => {
       let total = 0;
       Object.entries(inputs).forEach(([cat, items]) => {
-        const vals = items.map(i => parseFloat(i.value)).filter(v => !isNaN(v) && v > 0);
-        if (vals.length) { target[cat] = vals; total += vals.reduce((a, b) => a + b, 0); }
+        const processedItems = items.map(i => {
+          const amt = parseFloat(i.value);
+          if (!isNaN(amt) && amt > 0) {
+            // New Format: Always save as object { amount, label }
+            return { amount: amt, label: i.label };
+          }
+          return null;
+        }).filter(Boolean);
+
+        if (processedItems.length) { 
+          target[cat] = processedItems; 
+          total += processedItems.reduce((a, b) => a + b.amount, 0); 
+        }
       });
       return total;
     };
@@ -481,7 +515,12 @@ export default function App() {
 
   const pieData = Object.entries(filtered.reduce((acc, t) => {
     Object.entries(t.expenses || {}).forEach(([c, v]) => {
-      acc[c] = (acc[c] || 0) + (Array.isArray(v) ? v.reduce((a,b)=>a+b,0) : v);
+      // Handle both old (number) and new (object) formats for Charts
+      const sum = Array.isArray(v) 
+        ? v.reduce((a, b) => a + getAmount(b), 0) 
+        : getAmount(v); // legacy fallback (unlikely path if strict array used)
+      
+      acc[c] = (acc[c] || 0) + sum;
     });
     return acc;
   }, {})).map(([name, value]) => ({ name, value })).filter(i => i.value > 0);
@@ -662,7 +701,7 @@ export default function App() {
               type="income" 
               onAdd={handleAddField}
               onRemove={handleRemoveField}
-              onChange={handleInputChange}
+              onChange={handleFieldChange}
             />
             <InputSection 
               title="Expenses" 
@@ -671,7 +710,7 @@ export default function App() {
               type="expense"
               onAdd={handleAddField}
               onRemove={handleRemoveField}
-              onChange={handleInputChange}
+              onChange={handleFieldChange}
             />
 
             <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-gray-200">
